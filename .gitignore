@@ -1,0 +1,15 @@
+## File system
+.DS_Store
+
+## Editor
+.vscode
+
+## Tool
+.cargo
+
+## Build
+/doc/
+build/
+/target
+
+Cargo.lock
