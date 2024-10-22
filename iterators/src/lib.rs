@@ -1,5 +1,3 @@
-#[ignore = "reason"]
-
 /// # Iteration Example
 ///
 /// In Rust, the `for` loop is syntactic sugar for iterating over items using an iterator.
@@ -24,8 +22,6 @@
 /// and then uses the `while let Some` pattern to iterate over the elements. The iterator's
 /// `.next()` method is called in each iteration to get the next element, and when the
 /// iterator is exhausted (returns `None`), the loop ends.
-///
-///
 
 /// # Iterating Over a Vector in Rust
 ///
@@ -81,21 +77,73 @@
 /// you can refer to this helpful discussion:
 /// [StackOverflow: What is the difference between iter and into_iter?](https://stackoverflow.com/questions/34733811/what-is-the-difference-between-iter-and-into-iter)
 
-pub fn flatten<I>(iter: I) -> Flatten<I>
-where
-    I: Iterator,
-    I::Item: IntoIterator,
-{
-    Flatten::new(iter)
+/// An extension trait for iterators that provides the `our_flatten` method.
+pub trait IteratorExt: Iterator {
+    /// Flattens an iterator of iterables into a single iterator.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use your_crate_name::IteratorExt; // Replace `your_crate_name` with your crate's name
+    ///
+    /// let nested = vec![vec![1, 2], vec![3, 4]];
+    /// let flat_iter = nested.into_iter().our_flatten();
+    ///
+    /// let collected: Vec<_> = flat_iter.collect();
+    /// assert_eq!(collected, vec![1, 2, 3, 4]);
+    /// ```
+    fn our_flatten(self) -> Flatten<Self>
+    where
+        Self: Sized,
+        Self::Item: IntoIterator;
 }
 
+impl<T> IteratorExt for T
+where
+    T: Iterator,
+{
+    fn our_flatten(self) -> Flatten<Self>
+    where
+        Self: Sized,
+        Self::Item: IntoIterator,
+    {
+        flatten(self)
+    }
+}
+
+/// Creates a `Flatten` iterator from any iterable of iterables.
+///
+/// # Example
+///
+/// ```rust
+/// let nested = vec![vec![1, 2], vec![3, 4]];
+/// let flat_iter = flatten(nested);
+///
+/// let collected: Vec<_> = flat_iter.collect();
+/// assert_eq!(collected, vec![1, 2, 3, 4]);
+/// ```
+pub fn flatten<I>(iter: I) -> Flatten<I::IntoIter>
+where
+    I: IntoIterator,
+    I::Item: IntoIterator,
+{
+    Flatten::new(iter.into_iter())
+}
+
+/// An iterator that flattens an iterator of iterators into a single iterator.
+///
+/// This struct is created by the [`flatten`] function or the [`our_flatten`] method on [`IteratorExt`].
+///
+/// [`flatten`]: fn.flatten.html
+/// [`our_flatten`]: trait.IteratorExt.html#method.our_flatten
 pub struct Flatten<O>
 where
     O: Iterator,
     O::Item: IntoIterator,
 {
     outer: O,
-    inner: Option<<O::Item as IntoIterator>::IntoIter>,
+    front_iter: Option<<O::Item as IntoIterator>::IntoIter>,
+    back_iter: Option<<O::Item as IntoIterator>::IntoIter>,
 }
 
 impl<O> Flatten<O>
@@ -106,7 +154,8 @@ where
     fn new(iter: O) -> Self {
         Flatten {
             outer: iter,
-            inner: None,
+            front_iter: None,
+            back_iter: None,
         }
     }
 }
@@ -117,17 +166,45 @@ where
     O::Item: IntoIterator,
 {
     type Item = <O::Item as IntoIterator>::Item;
+
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(ref mut inner_iter) = self.inner {
-                if let Some(i) = inner_iter.next() {
-                    return Some(i);
+            if let Some(ref mut front_iter) = self.front_iter {
+                if let Some(item) = front_iter.next() {
+                    return Some(item);
                 }
-                self.inner = None
+                self.front_iter = None;
             }
 
-            let next_inner_item = self.outer.next()?.into_iter();
-            self.inner = Some(next_inner_item);
+            if let Some(next_inner) = self.outer.next() {
+                self.front_iter = Some(next_inner.into_iter());
+            } else {
+                return self.back_iter.as_mut()?.next();
+            }
+        }
+    }
+}
+
+impl<O> DoubleEndedIterator for Flatten<O>
+where
+    O: DoubleEndedIterator,
+    O::Item: IntoIterator,
+    <O::Item as IntoIterator>::IntoIter: DoubleEndedIterator,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(ref mut back_iter) = self.back_iter {
+                if let Some(item) = back_iter.next_back() {
+                    return Some(item);
+                }
+                self.back_iter = None;
+            }
+
+            if let Some(next_back_inner) = self.outer.next_back() {
+                self.back_iter = Some(next_back_inner.into_iter());
+            } else {
+                return self.front_iter.as_mut()?.next_back();
+            }
         }
     }
 }
@@ -135,18 +212,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn empty() {
-        // Cause empty return an empty return list, we should explicitely declare to the compiler the type. Here it is vec of unit.
+        // Since `empty` returns an empty iterator, we should explicitly declare the type.
         assert_eq!(flatten(std::iter::empty::<Vec<()>>()).count(), 0);
     }
 
     #[test]
     fn empty_wide() {
-        assert_eq!(
-            flatten(vec![Vec::<()>::new(), vec![], vec![]].into_iter()).count(),
-            0
-        )
+        assert_eq!(flatten(vec![Vec::<()>::new(), vec![], vec![]]).count(), 0);
     }
 
     #[test]
@@ -161,6 +236,44 @@ mod tests {
 
     #[test]
     fn two_wide() {
-        assert_eq!(flatten(vec![vec!["a"], vec!["b"]].into_iter()).count(), 2);
+        assert_eq!(flatten(vec![vec!["a"], vec!["b"]]).count(), 2);
+    }
+
+    #[test]
+    fn reverse() {
+        assert_eq!(
+            flatten(std::iter::once(vec!["a", "b"]))
+                .rev()
+                .collect::<Vec<_>>(),
+            vec!["b", "a"]
+        );
+    }
+
+    #[test]
+    fn reverse_wide() {
+        assert_eq!(
+            flatten(vec![vec!["a"], vec!["b"]])
+                .rev()
+                .collect::<Vec<_>>(),
+            vec!["b", "a"]
+        );
+    }
+
+    #[test]
+    fn both_ends() {
+        let mut iter = flatten(vec![vec!["a1", "a2", "a3"], vec!["b1", "b2", "b3"]]);
+        assert_eq!(iter.next(), Some("a1"));
+        assert_eq!(iter.next_back(), Some("b3"));
+        assert_eq!(iter.next(), Some("a2"));
+        assert_eq!(iter.next_back(), Some("b2"));
+        assert_eq!(iter.next(), Some("a3"));
+        assert_eq!(iter.next_back(), Some("b1"));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
+    }
+
+    #[test]
+    fn ext() {
+        assert_eq!(vec![vec![0, 1]].into_iter().our_flatten().count(), 2);
     }
 }
