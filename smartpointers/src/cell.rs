@@ -32,12 +32,3 @@ impl<T> Cell<T> {
         unsafe { *self.value.get() }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Cell;
-
-    fn bad() {
-        let x = Cell::new(42);
-    }
-}
