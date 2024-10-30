@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
 
-members = [ "iterators", 
+members = [ "functions", "iterators", 
     "lifetimes"
 , "smartpointers"]
