@@ -3,4 +3,4 @@ resolver = "2"
 
 members = [ "functions", "iterators", 
     "lifetimes"
-, "smartpointers"]
+, "modules", "smartpointers"]
